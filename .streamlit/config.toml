@@ -1,0 +1,13 @@
+[server]
+# Tamanho máximo de upload (MB)
+maxUploadSize = 10
+enableXsrfProtection = true
+
+[browser]
+# Não envia estatísticas de uso ao Streamlit
+gatherUsageStats = false
+
+[client]
+# Não mostra detalhes técnicos de erros aos usuários (evita vazar informações internas)
+showErrorDetails = false
+toolbarMode = "minimal"
