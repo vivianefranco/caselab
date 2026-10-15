@@ -58,26 +58,25 @@ def _sugerir_competencias() -> None:
     problema = seguranca.sanitizar(st.session_state.get("nt_problema"), 2000)
     publico = seguranca.sanitizar(st.session_state.get("nt_publico"), 300)
     if len(problema) < 30 or not publico:
-        st.session_state["nt_erro"] = "Descreva o problema e o público antes de pedir sugestões."
+        st.session_state["nt_msg"] = ("error", "Antes de pedir sugestões, descreva o problema (pelo menos uma frase "
+                                               "completa) e o cargo ou função dos participantes, nos itens 1 e 2.")
         return
     if st.session_state.get("geracoes", 0) >= config.MAX_GERACOES_SESSAO:
-        st.session_state["nt_erro"] = "Limite de uso da IA nesta sessão atingido."
+        st.session_state["nt_msg"] = ("error", "Limite de uso da IA nesta sessão atingido. Recarregue a página mais tarde.")
         return
     st.session_state["geracoes"] = st.session_state.get("geracoes", 0) + 1
     try:
         sugestoes = ia.sugerir_competencias(problema, publico, seguranca.sanitizar(st.session_state.get("nt_contexto"), 1500))
     except ia.ErroIA as erro:
-        st.session_state["nt_erro"] = str(erro)
+        st.session_state["nt_msg"] = ("error", str(erro))
         return
     st.session_state["nt_competencias"] = "\n".join(sugestoes)
+    st.session_state["nt_msg"] = ("success", f"{len(sugestoes)} competências sugeridas. Edite à vontade antes de gerar a trilha.")
 
 
 def _nova() -> None:
     st.markdown("Comece pelo **problema** que a equipe precisa resolver. Depois diga **quem** vai participar, "
                 "**quais competências** são necessárias e **com quais materiais** a trilha será construída.")
-    erro = st.session_state.pop("nt_erro", None)
-    if erro:
-        st.error(erro)
 
     with st.container(border=True):
         st.markdown("**1. O problema**")
@@ -98,6 +97,9 @@ def _nova() -> None:
                      placeholder="Ex.:\nPriorização: decidir o que atender primeiro\nComunicação escrita: respostas claras e empáticas")
         st.button("💡 Sugerir competências com IA", on_click=_sugerir_competencias,
                   help="Usa o problema e o público para sugerir competências. Você pode editar a lista.")
+        mensagem = st.session_state.pop("nt_msg", None)
+        if mensagem:
+            getattr(st, mensagem[0])(mensagem[1])
     with st.container(border=True):
         st.markdown("**4. Materiais de referência**")
         materiais = db.listar_materiais()

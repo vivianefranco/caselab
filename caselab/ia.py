@@ -11,7 +11,9 @@ como DADOS; o nome do colaborador nunca é enviado à IA (minimização — LGPD
 """
 import json
 import math
+import unicodedata
 
+import openai
 import streamlit as st
 from openai import OpenAI
 
@@ -34,13 +36,27 @@ def _cliente() -> OpenAI:
     return OpenAI(api_key=config.LLM_API_KEY, base_url=config.LLM_BASE_URL, timeout=120, max_retries=2)
 
 
+def _chave(nome) -> str:
+    """'Competências' → 'competencias': modelos em português às vezes acentuam as chaves do JSON."""
+    t = unicodedata.normalize("NFKD", str(nome)).encode("ascii", "ignore").decode()
+    return t.strip().lower().replace(" ", "_")
+
+
+def _normalizar_chaves(valor):
+    if isinstance(valor, dict):
+        return {_chave(k): _normalizar_chaves(v) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_normalizar_chaves(v) for v in valor]
+    return valor
+
+
 def _extrair_json(texto: str) -> dict:
     texto = (texto or "").strip()
     inicio, fim = texto.find("{"), texto.rfind("}")
     if inicio == -1 or fim == -1:
         raise ErroIA("A IA retornou uma resposta em formato inesperado. Tente novamente.")
     try:
-        return json.loads(texto[inicio:fim + 1])
+        return _normalizar_chaves(json.loads(texto[inicio:fim + 1]))
     except json.JSONDecodeError as erro:
         raise ErroIA("A IA retornou uma resposta em formato inesperado. Tente novamente.") from erro
 
@@ -55,8 +71,23 @@ def _chamar(sistema: str, usuario: str, temperatura: float, json_mode: bool) -> 
         argumentos["response_format"] = {"type": "json_object"}
     try:
         resposta = _cliente().chat.completions.create(**argumentos)
+    except openai.AuthenticationError as erro:
+        raise ErroIA("A chave da IA foi recusada. Confira LLM_API_KEY nos Secrets e se LLM_BASE_URL é da mesma "
+                     "região da sua conta (internacional, EUA ou China).") from erro
+    except openai.NotFoundError as erro:
+        raise ErroIA(f"O modelo “{config.LLM_MODELO}” não foi encontrado nesse endereço. Confira LLM_MODEL e "
+                     "LLM_BASE_URL nos Secrets.") from erro
+    except openai.PermissionDeniedError as erro:
+        raise ErroIA("Sua conta da IA não tem permissão para esse modelo ou está sem saldo/cota. "
+                     "Confira no painel do provedor.") from erro
+    except openai.RateLimitError as erro:
+        raise ErroIA("O serviço de IA recusou por limite de uso ou cota. Aguarde um pouco ou confira o saldo "
+                     "da conta no painel do provedor.") from erro
+    except openai.APITimeoutError as erro:
+        raise ErroIA("A IA demorou demais para responder. Tente novamente.") from erro
     except Exception as erro:
-        raise ErroIA("Não foi possível falar com o serviço de IA agora. Tente novamente em instantes.") from erro
+        raise ErroIA("Não foi possível falar com o serviço de IA agora. Tente novamente em instantes. "
+                     f"(detalhe técnico: {type(erro).__name__})") from erro
     return resposta.choices[0].message.content or ""
 
 
@@ -107,7 +138,20 @@ def sugerir_competencias(problema: str, publico: str, contexto: str) -> list[str
 Responda apenas com JSON: {{"competencias": ["..."]}}"""
     usuario = (f"<problema>\n{problema}\n</problema>\nPúblico: {publico}\nContexto da equipe: {contexto or 'não informado'}\n\n"
                "Sugira as competências em JSON.")
-    return lista_limpa(_extrair_json(_chamar(sistema, usuario, 0.4, True)).get("competencias"), 6, 200)
+    dados = _extrair_json(_chamar(sistema, usuario, 0.4, True))
+    bruto = dados.get("competencias")
+    if not bruto:  # Aceita outro nome de chave, desde que seja uma lista
+        bruto = next((v for v in dados.values() if isinstance(v, list) and v), [])
+    sugestoes = []
+    for item in bruto:
+        if isinstance(item, dict):  # ex.: {"nome": "...", "descricao": "..."}
+            valores = [_texto(v) for v in item.values() if _texto(v)]
+            item = ": ".join(valores[:2])
+        sugestoes.append(item)
+    sugestoes = lista_limpa(sugestoes, 6, 200)
+    if not sugestoes:
+        raise ErroIA("A IA não devolveu sugestões desta vez. Tente de novo ou escreva as competências.")
+    return sugestoes
 
 
 # --- 2. Rascunho da trilha ---
